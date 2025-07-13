@@ -3,3 +3,8 @@ yt-dlp
 Pillow
 pyglet
 sounddevice
+fastapi
+uvicorn[standard]
+pydantic
+requests
+aiohttp

@@ -37,6 +37,9 @@ class AppContext:
     search_manager: SearchManager
     playlist_manager: PlaylistManager
     
+    # Services
+    music_service: 'MusicService'
+    
     # Data
     feed_items: list[Song] = field(default_factory=list)
     search_results: list[SearchResult] = field(default_factory=list)

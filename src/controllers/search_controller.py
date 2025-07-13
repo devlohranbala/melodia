@@ -297,13 +297,11 @@ class SearchController(BaseController):
         status_label = self.url_status if source_type == "url" else self.search_status
         self._update_status_label(status_label, "✅ Download concluído!")
         
-        self.context.feed_items.insert(0, song)
-        self.event_bus.publish(Event('save_data'))
+        # Use MusicService to add the song
+        self.context.music_service.add_song(song)
         
         if source_type == "url" and self.url_entry:
             self.url_entry.delete(0, "end")
-        
-        self.event_bus.publish(Event('update_feed'))
         
         if messagebox.askyesno("Adicionar", "Adicionar a uma playlist?"):
             self.event_bus.publish(Event('add_to_playlist', {'song': song}))

@@ -1,6 +1,5 @@
 """Controller classes implementing the application logic."""
 
-from .controller import Controller
 from .base_controller import BaseController
 from .navigation_controller import NavigationController
 from .player_controller import PlayerController
@@ -10,7 +9,6 @@ from .playlist_controller import PlaylistController
 from .settings_controller import SettingsController
 
 __all__ = [
-    'Controller',
     'BaseController',
     'NavigationController',
     'PlayerController',

@@ -1,7 +1,7 @@
-from tkinter import messagebox
-from datetime import datetime
+import sys
 from typing import Optional, Callable, Any
 from pathlib import Path
+import threading
 
 try:
     import customtkinter as ctk
@@ -17,9 +17,9 @@ except ImportError as e:
     print("Execute: pip install Pillow")
     sys.exit(1)
 
-from ..models import Song, AUDIO_EXTENSIONS
+from ..core import AppContext, Event
+from ..models import Song
 from ..ui import UIComponents
-from ..core import Event, AppContext
 from .base_controller import BaseController
 
 
@@ -30,17 +30,21 @@ class FeedController(BaseController):
         super().__init__(app_context)
         self.feed_search_entry: Optional[ctk.CTkEntry] = None
         self.feed_music_container: Optional[ctk.CTkFrame] = None
+        self.search_timer: Optional[threading.Timer] = None
     
     def initialize(self) -> None:
         """Initialize feed controller"""
         self._setup_event_handlers()
-        self.update_feed()
+        self.refresh_feed()
     
     def _setup_event_handlers(self) -> None:
         """Setup event handlers"""
         self.event_bus.subscribe('show_feed', lambda e: self.show_feed())
-        self.event_bus.subscribe('update_feed', lambda e: self.update_feed())
-        self.event_bus.subscribe('song_deleted', lambda e: self.update_feed())
+        self.event_bus.subscribe('update_feed', lambda e: self.refresh_feed())
+        self.event_bus.subscribe('song_deleted', lambda e: self.refresh_feed())
+        self.event_bus.subscribe('songs_refreshed', lambda e: self.refresh_feed())
+        self.event_bus.subscribe('song_added', lambda e: self.refresh_feed())
+        self.event_bus.subscribe('song_updated', lambda e: self.refresh_feed())
     
     def show_feed(self) -> None:
         """Show music feed with search"""
@@ -78,16 +82,34 @@ class FeedController(BaseController):
         self.display_filtered_feed(self.context.feed_items)
     
     def filter_feed(self, event=None) -> None:
-        """Filter feed music"""
-        if self.feed_search_entry and (search_term := self.feed_search_entry.get().lower().strip()):
-            filtered_items = [
-                item for item in self.context.feed_items
-                if search_term in item.title.lower() or search_term in item.artist.lower()
-            ]
-        else:
-            filtered_items = self.context.feed_items
+        """Filter feed music with debounce"""
+        # Cancel previous timer if exists
+        if self.search_timer:
+            self.search_timer.cancel()
         
-        self.display_filtered_feed(filtered_items)
+        # Start new timer with 300ms delay
+        self.search_timer = threading.Timer(0.3, self._perform_search)
+        self.search_timer.start()
+    
+    def _perform_search(self) -> None:
+        """Perform the actual search"""
+        search_term = ""
+        if self.feed_search_entry:
+            search_term = self.feed_search_entry.get().strip()
+        
+        # If search term is empty, use local feed items
+        if not search_term:
+            filtered_items = self.context.feed_items
+        else:
+            # Filter locally first to avoid API calls for simple searches
+            filtered_items = [
+                song for song in self.context.feed_items
+                if search_term.lower() in song.title.lower() or 
+                   search_term.lower() in song.artist.lower()
+            ]
+        
+        # Schedule UI update on main thread
+        self.context.root.after(0, lambda: self.display_filtered_feed(filtered_items))
     
     def display_filtered_feed(self, items: list[Song]) -> None:
         """Display filtered music"""
@@ -205,7 +227,7 @@ class FeedController(BaseController):
         delete_btn = ctk.CTkButton(
             secondary_frame,
             text="🗑",
-            command=lambda: self.delete_song(item),
+            command=lambda: self.context.music_service.confirm_delete_song(item),
             font=ctk.CTkFont(size=14),
             width=36,
             height=36,
@@ -218,87 +240,23 @@ class FeedController(BaseController):
         )
         delete_btn.pack(side="left")
     
-    def delete_song(self, song: Song) -> None:
-        """Delete song"""
-        if messagebox.askyesno(
-            "Confirmar Exclusão",
-            f"Excluir '{song.title}' permanentemente?\n\nEsta ação não pode ser desfeita."
-        ):
-            try:
-                # Stop if playing
-                if (
-                    self.context.player.current_song and 
-                    self.context.player.current_song.file_path == song.file_path
-                ):
-                    self.context.player.pause()
-                    self.context.player.current_song = None
-                    
-                # Remove file
-                if (file_path := Path(song.file_path)).exists():
-                    file_path.unlink()
-                    
-                # Remove from list
-                self.context.feed_items = [
-                    item for item in self.context.feed_items 
-                    if item.file_path != song.file_path
-                ]
-                
-                # Remove from all playlists
-                for playlist_name in self.context.playlist_manager.playlists:
-                    self.context.playlist_manager.remove_from_playlist(playlist_name, song)
-                
-                # Save and update
-                self.event_bus.publish(Event('save_data'))
-                self.event_bus.publish(Event('song_deleted'))
-                
-                messagebox.showinfo("Sucesso", "Música excluída com sucesso!")
-                
-            except Exception as e:
-                messagebox.showerror("Erro", f"Erro ao excluir música: {str(e)}")
-    
-    def update_feed(self) -> None:
-        """Update music feed"""
-        self.context.feed_items = []
-        
-        if self.context.downloads_dir.exists():
-            for file in self.context.downloads_dir.glob("*"):
-                if file.suffix in AUDIO_EXTENSIONS:
-                    filename_without_ext = file.stem
-                    
-                    # Extract artist and title
-                    match filename_without_ext.split(' - ', 1):
-                        case [artist, title] if ' - ' in filename_without_ext:
-                            artist = artist.strip().replace('_', ' ')
-                            title = title.strip().replace('_', ' ')
-                        case _:
-                            title = filename_without_ext.replace('_', ' ').strip()
-                            artist = 'Artista Desconhecido'
-                    
-                    # Find thumbnail
-                    thumbnail_path = ""
-                    for ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                        if (thumbnail_file := file.with_suffix(ext)).exists():
-                            thumbnail_path = str(thumbnail_file)
-                            break
-                    
-                    song = Song(
-                        title=title,
-                        artist=artist,
-                        file_path=str(file),
-                        date=datetime.fromtimestamp(file.stat().st_ctime).strftime("%d/%m/%Y"),
-                        thumbnail_path=thumbnail_path
-                    )
-                    self.context.feed_items.append(song)
+    def refresh_feed(self) -> None:
+        """Refresh music feed using MusicService"""
+        try:
+            # Get songs from API and update context
+            songs = self.context.music_service.get_all_songs()
+            self.context.feed_items = songs
             
-            # Sort by creation time
-            self.context.feed_items.sort(
-                key=lambda x: Path(x.file_path).stat().st_ctime,
-                reverse=True
-            )
-        
-        # Update display if on feed view
-        if self.context.current_view == "feed" and hasattr(self, 'feed_search_entry'):
-            self.filter_feed()
+            # Update display if on feed view
+            if self.context.current_view == "feed" and hasattr(self, 'feed_search_entry'):
+                self._perform_search()
+        except Exception as e:
+            print(f"Error refreshing feed: {e}")
+            # Fallback to existing items
+            if self.context.current_view == "feed" and hasattr(self, 'feed_search_entry'):
+                self._perform_search()
+    
+
     
     def _create_default_thumbnail(self, parent: ctk.CTkFrame) -> None:
         """Create default thumbnail"""

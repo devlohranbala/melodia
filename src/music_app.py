@@ -26,20 +26,26 @@ from .managers import (
 )
 from .core import MusicPlayer, Event, EventBus, AppContext
 from .ui import UIFactory
+from .services import MusicService
+from .services.api_music_service import APIMusicService
 from .controllers import (
-    Controller, NavigationController, PlayerController,
+    NavigationController, PlayerController,
     FeedController, SearchController, PlaylistController,
     SettingsController
 )
 from .models import ThemeColors
+from .api.client import set_api_base_url
 
 
 class MusicApp:
     """Main application class"""
     
-    def __init__(self, root: ctk.CTk) -> None:
+    def __init__(self, root: ctk.CTk, api_url: str = "http://127.0.0.1:8000") -> None:
         self.root = root
         self.root.title("🎵 Melodia - Modern Music Player")
+        
+        # Configure API client
+        set_api_base_url(api_url)
         
         # Maximize window
         self.root.after(0, lambda: self.root.state('zoomed'))
@@ -83,11 +89,15 @@ class MusicApp:
             download_manager=download_manager,
             search_manager=search_manager,
             playlist_manager=playlist_manager,
+            music_service=None,  # Will be initialized after context creation
             feed_items=feed_items
         )
         
+        # Initialize music service with context (using API-based service)
+        self.context.music_service = APIMusicService(self.context)
+        
         # Initialize controllers
-        self.controllers: dict[str, Controller] = {
+        self.controllers = {
             'navigation': NavigationController(self.context),
             'player': PlayerController(self.context),
             'feed': FeedController(self.context),

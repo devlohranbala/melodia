@@ -1,12 +1,5 @@
-"""Core application components including events, context and player."""
-
+from .player import MusicPlayer
 from .events import Event, EventBus
 from .app_context import AppContext
-from .player import MusicPlayer
 
-__all__ = [
-    'Event',
-    'EventBus',
-    'AppContext',
-    'MusicPlayer'
-]
+__all__ = ['MusicPlayer', 'Event', 'EventBus', 'AppContext']
