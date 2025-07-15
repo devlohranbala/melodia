@@ -14,15 +14,13 @@ class APIMusicService:
         self.context = app_context
         self.event_bus = app_context.event_bus
         self.api_client = get_api_client()
+        
+        # Initialize by syncing with API and local files
+        self.refresh_songs_from_directory()
     
     def get_all_songs(self) -> List[Song]:
-        """Get all songs from API"""
-        try:
-            song_responses = self.api_client.get_songs()
-            return [self._song_response_to_song(response) for response in song_responses]
-        except Exception as e:
-            print(f"Error getting songs from API: {e}")
-            return []
+        """Get all songs from local context (updated to fix feed loading issue)"""
+        return self.context.feed_items.copy()
     
     def search_songs(self, query: str) -> List[Song]:
         """Search songs by title or artist via API"""
@@ -100,15 +98,40 @@ class APIMusicService:
             return False
     
     def refresh_songs_from_directory(self) -> None:
-        """Refresh songs list by getting from API"""
+        """Refresh songs list by syncing with API and local files"""
         try:
-            songs = self.get_all_songs()
-            self.context.feed_items = songs
+            # Get songs from API to sync with server state
+            api_songs = []
+            try:
+                song_responses = self.api_client.get_songs()
+                api_songs = [self._song_response_to_song(response) for response in song_responses]
+            except Exception as e:
+                print(f"Warning: Could not sync with API: {e}")
+            
+            # Merge with local context, keeping local additions
+            local_paths = {song.file_path for song in self.context.feed_items}
+            api_paths = {song.file_path for song in api_songs}
+            
+            # Keep local songs that aren't in API yet
+            merged_songs = list(self.context.feed_items)
+            
+            # Add API songs that aren't in local context
+            for api_song in api_songs:
+                if api_song.file_path not in local_paths:
+                    merged_songs.append(api_song)
+            
+            # Sort by creation time (newest first)
+            merged_songs.sort(
+                key=lambda x: Path(x.file_path).stat().st_ctime if Path(x.file_path).exists() else 0,
+                reverse=True
+            )
+            
+            self.context.feed_items = merged_songs
             
             # Notify system of changes
             self.event_bus.publish(Event('songs_refreshed'))
         except Exception as e:
-            print(f"Error refreshing songs from API: {e}")
+            print(f"Error refreshing songs: {e}")
     
     def get_song_by_path(self, file_path: str) -> Optional[Song]:
         """Get a song by its file path"""
